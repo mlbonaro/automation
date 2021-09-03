@@ -1,0 +1,736 @@
+function onOpen() {
+  // This line calls the SpreadsheetApp and gets its UI   
+  // Or DocumentApp or FormApp.
+  var ui = SpreadsheetApp.getUi();
+  
+  //These lines create the menu items and 
+  // tie them to functions we will write in Apps Script
+  
+  ui.createMenu('Script Menu')
+  .addItem('On Submit', 'onSubmit')
+  .addItem('Send to Approvers', 'sendToApprovers')
+  .addItem('Send Final Approval', 'sendFinalApproval')
+  
+  
+  .addToUi();
+}
+
+
+function onSubmit(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getActiveSheet().getName() == 'Intake Form Responses'){
+    var s = ss.getSheetByName('Intake Form Responses');
+    var data = s.getDataRange();
+    var values = data.getValues();
+    var row = e.range.getRow();
+    row = row-1; //needed bacause we reference the row in the array location [row] format not range format
+    //var row = 2;
+    var today = new Date();
+    var lastRow = s.getLastRow();
+    var lastCol = s.getLastColumn();
+    var timeZone = Session.getScriptTimeZone();
+    var today = Utilities.formatDate(new Date(), timeZone, "dd-MM-yyyy hh:mm:ss");
+    //var today = Utilities.formatDate(new Date(), timeZone, "dd-MM-yyyy");
+    
+    for (var m = 0; m < lastCol; m++){
+      if (values[0][m] == 'Timestamp'){
+        var timestampCol = m;
+      }
+      if (values[0][m] == 'Email Address'){
+        var emailCol = m;
+      }
+      if (values[0][m] == 'Please provide your full name'){
+        var nameCol = m;
+      }
+      if (values[0][m] == 'Name of the Partner (legal entity)'){
+        var partnerNameCol = m;
+      }
+      if (values[0][m] == 'Deal Name'){
+        var dealNameCol = m;
+      }
+      if (values[0][m] == 'Define the Level of Exposure'){
+        var exposureCol = m;
+      }
+      if (values[0][m] == 'Please list email address of all relevant Deal Team members to this project'){
+        var contribCol = m;
+      }
+      if (values[0][m] == 'Please list email address of all relevant Deal Approvers to this project'){
+        var approverCol = m;
+      }
+      if (values[0][m] == 'Please provide the information on who funds the Budget'){
+        var budgetCol = m;
+      }
+      if (values[0][m] == 'Please provide who manages the partner post signing'){
+        var postCol = m;
+      }
+      if (values[0][m] == 'Please provide who is accountable for results (Learnings, impact, IRR)'){
+        var resultsCol = m;
+      }
+      if (values[0][m] == 'Please provide who negotiates and manages the deal'){
+        var manageCol = m;
+      }
+    }
+    
+    var timestamp = values[row][timestampCol];
+    var submitter = values[row][emailCol];
+    if (submitter == 'mbonaro@gsuitetest.fb.com'){
+      submitter = 'mbonaro@fb.com';
+    }
+    var spmName = values[row][nameCol];
+    var partnerName = values[row][partnerNameCol];
+    var dealName = values[row][dealNameCol];
+    var exposure = values[row][exposureCol];
+    var contributor = values[row][contribCol];
+    var approvers = values[row][approverCol];
+    var budget = values[row][budgetCol];
+    var postSigning = values[row][postCol];
+    var results = values[row][resultsCol];
+    var managesDeal = values[row][manageCol];
+    
+    try{
+      //Creating the new document and filling in values
+      var fileArray = createFolder(partnerName + ' - ' + dealName);
+      Logger.log('fileArray: ' + fileArray);
+      
+      var newFolder = fileArray[0];
+      Logger.log('newFolder: ' + newFolder);
+      
+      var newFolderUrl = newFolder.getUrl();
+      Logger.log('newFolderUrl: ' + newFolderUrl);
+      
+      var newUrl = DriveApp.getFileById('1odECjT-7bWAgUnbshc99Gm-3Vp0KpAPswU2aC595qM8').makeCopy('FBC deal Greenlighting -  ' + dealName + ' - ' + today, newFolder).addEditor('mbonaro@gsuitetest.fb.com');
+      Logger.log('newUrl: ' + newUrl);
+      Logger.log('newUrl2: ' + newUrl.getUrl());
+      
+      //DocumentApp.openByUrl(newUrl.getUrl()).addEditor('mbonaro@fb.com').addEditor('mbonaro@gsuitetest.fb.com'); //.addEditor(submitter);
+      
+      Logger.log('newUrl: ' + newUrl);
+      Logger.log('newFolder: ' + newFolderUrl);
+      
+      var noteDocUrl = fileArray[1].getUrl();
+      
+      var newId = newUrl.getId();
+      var newDoc = DocumentApp.openById(newId);
+      var newDocURL2 = DriveApp.getFileById(newId).getUrl()
+      var newBody = newDoc.getBody();
+      //newDoc.addEditor(submitter);
+      
+      newBody.replaceText("{dealName}", dealName)
+      .replaceText("{dealLead}", spmName)
+      .replaceText("{exposure}", exposure)
+      .replaceText("{approvers}", approvers)
+      .replaceText("{contributors}", contributor)
+      .replaceText("{budget}", budget)
+      .replaceText("{management}", postSigning)
+      .replaceText("{outcomes}", results)
+      .replaceText("{deal}", managesDeal);
+      
+      try{
+        emailController(submitter, contributor, spmName, newId, dealName, newFolderUrl, partnerName);
+      }
+      catch(e){
+        Logger.log(e);
+      }
+    }
+    catch(e){
+      Logger.log(e);
+    }
+    var array = [newFolderUrl, newDocURL2, noteDocUrl];
+    var string = array.join(', ');
+    
+    //update second sheet
+    try{
+      copySubmission(ss, timestamp, submitter, partnerName, string, spmName, approvers, contributor, dealName);
+    }
+    catch(e){
+    } 
+  }
+  //else copy to main repository
+  
+}
+
+function createFolder(partnerName){
+  try{
+    //Logger.log(DriveApp.getFolderById('1KTwAmO8P4z5qOWo1Y_1BmzNAtQr8omiX').getName());
+    //Create a new Folder in the PTRB folder loaction with the partner name
+    var folder = DriveApp.getFolderById('1-qzcSI3LGjECO-_NOqe7wjGR7MH13CbC');
+    var newFolderID = folder.createFolder(partnerName).getId();
+    var newFolder = DriveApp.getFolderById(newFolderID);
+    //DocumentApp.openById(newFolderID).addEditor('mbonaro@fb.com').addEditor('maritzajl@fb.com');
+    
+    /*
+    DriveApp.Permissions.insert(
+      {
+        'role': 'editor',
+        'type': 'user',
+        'value': 'mbonaro@fb.com, maritzajl@fb.com, angus@fb.com, achande@fb.com, dpulito@fb.com'
+      },
+      newFolder.getId(),
+      {
+        'sendNotificationEmails': false
+      }
+    );
+    */
+  }
+  catch(e){
+    Logger.log(e);
+  }
+  
+  try{
+    
+    //Create a new version of the notes doc and put it in the folder
+    var newDoc = DocumentApp.create('Notes Doc: ' + partnerName).addEditor('mbonaro@fb.com').addEditor('maritzajl@fb.com').addEditor('angus@fb.com').addEditor('mbonaro@gsuitetest.fb.com');
+    var driveFile = DriveApp.getFileById(newDoc.getId()); // Gets the drive File
+    var driveFileCopy = driveFile.makeCopy(newDoc.getName(), newFolder); // Create a copy of the newDoc in the shared folder
+    driveFile.setTrashed(true);
+  }
+  catch(e){
+    Logger.log(e);
+  }
+  var array = [newFolder, driveFileCopy];
+  return array; //Send back the new folder location so we can add other docs to it
+}
+
+
+function copySubmission(ss, timestamp, submitter, partnerName, string, spmName, approvers, contributor, dealName){
+  var s = ss.getSheetByName('Approval Dashboard');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  //var row = e.range.getRow();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  //var line1 = '7/1/2020 10:25:48';
+  //var line2 = 'mbonaro@fb.com';
+  
+  
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[1][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[1][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[1][m] == 'Submitter Name'){
+      var nameCol = m;
+    }
+    if (values[1][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[1][m] == 'Deal Name'){
+      var dealNameCol = m;
+    }
+    if (values[1][m] == 'Deal Team'){
+      var contribFormCol = m;
+    }
+    if (values[1][m] == 'DRG Approvers'){
+      var approversFormCol = m;
+    }
+    if (values[1][m] == 'Greenlight Docs'){
+      var reviewDocCol = m;
+    }
+    if (values[1][m] == 'Send Approval'){
+      var approveCol = m;
+    }
+    if (values[1][m] == 'Approvers'){
+      var approversCol = m;
+    }
+    if (values[1][m] == 'Final Approval'){
+      var finalApproversCol = m;
+    }
+  }
+  
+  s.getRange(lastRow+1, timestampCol+1, 1, 1).setValue(timestamp);
+  s.getRange(lastRow+1, emailAddressCol+1, 1, 1).setValue(submitter);
+  s.getRange(lastRow+1, nameCol+1, 1, 1).setValue(spmName);
+  s.getRange(lastRow+1, partnerNameCol+1, 1, 1).setValue(partnerName);
+  s.getRange(lastRow+1, dealNameCol+1, 1, 1).setValue(dealName);
+  s.getRange(lastRow+1, contribFormCol+1, 1, 1).setValue(contributor);
+  s.getRange(lastRow+1, approversFormCol+1, 1, 1).setValue(approvers);
+  s.getRange(lastRow+1, reviewDocCol+1, 1, 1).setValue(string);
+  s.getRange(lastRow+1, approveCol+1, 1, 1).insertCheckboxes();
+  s.getRange(lastRow+1, finalApproversCol+1, 1, 1).insertCheckboxes();
+  
+  /*
+  var rule = s.getRange(lastRow, approversCol+1, 1, 1).getDataValidation();
+  s.getRange(lastRow+1, approversCol+1, 1, 1).setDataValidation(rule)
+  */
+  
+}
+
+
+function emailController(submitter, contributor, spmName, newId, dealName, newFolderUrl, partnerName){
+  var newUrl = DriveApp.getFileById(newId).getUrl();
+  var link = '<a href="' + newUrl + '">FBC deal greenlighting - ' + dealName + '</a>';
+  var emailDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1fRaA4RfExyeJAB5dDVx8GHRDoRx3MeIubL4MwMt1xcE/edit#');
+  var string = emailDoc.getText().toString();
+  var alias = 'FBC BD Deal Process';
+  var replyEmail = 'mbonaro@fb.com';
+  var ccAddress = 'mbonaro@fb.com';
+  
+  //var ptrbTeamEmails = 'mbonaro@fb.com, maritzajl@fb.com, jkhurana@fb.com, devinmarsh@fb.com, michaelcohen@fb.com';
+  //var amazonUrl = '<a href="https://docs.google.com/document/d/1anm1g94JMK4VpQKrHR9faweiOuKdPSTWwWH57x5VJfA/edit?pli=1">Link</a>';
+  
+  //send michael/jitin
+  //sendLegalEmail(ccAddress, newId, partnerName, string, link, alias, replyEmail, spmName, contributor, newFolderUrl);
+  //send submission
+  //sendSubmissionEmail(recipient, newId, partnerName, string, link, alias, replyEmail);
+  //send contributor
+  sendContributorEmail(submitter, contributor, newId, dealName, spmName, string, link, alias, replyEmail, partnerName);
+}
+
+/*
+function sendLegalEmail(ccAddress, newId, partnerName, string, link, alias, replyEmail, spmName, contributor, newFolderUrl){
+var rawUrl = 'https://docs.google.com/spreadsheets/d/15QeXq7uCht9zuh4x2IgdnM5RI4n7DPtVMAVGz-AA5rY/edit#gid=692456357';
+var rawLink = '<a href="' + rawUrl + '">Raw data here</a>';
+var folderLink = '<a href="' + newFolderUrl + '">Folder with docs here</a>';
+var emailBody = string.substring(string.indexOf('[LEGAL_START]') + ('[LEGAL_START]').length, string.indexOf('[LEGAL_END]'))
+emailBody = emailBody.replace(/{docLink}/g, link)
+.replace(/{partnerName}/g, partnerName)
+.replace(/{spmName}/g, spmName)
+.replace(/{collaborators}/g, contributor)
+.replace(/{rawLink}/g, rawLink)
+.replace(/{folderLink}/g, folderLink);
+var subject = 'New submission for FBC BD';
+
+//var testEmail = 'mbonaro@fb.com, maritzajl@fb.com';
+//var michaelNjitin = 'mbonaro@fb.com';
+var recipient = 'mbonaro@fb.com';
+
+MailApp.sendEmail(recipient, subject, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail, cc: ccAddress});
+}
+
+function sendSubmissionEmail(submitter, submitter, newId, partnerName, string, link, alias, replyEmail){
+var emailBody = string.substring(string.indexOf('[SUBMISSION_START]') + ('[SUBMISSION_START]').length, string.indexOf('[SUBMISSION_END]'))
+emailBody = emailBody.replace(/{docLink}/g, link).replace(/{partnerName}/g, partnerName);
+var subject = 'Submission confirmed for ' + partnerName;
+
+MailApp.sendEmail(submitter, subject, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail});
+}
+*/
+
+function sendContributorEmail(submitter, contributor, newId, dealName, spmName, string, link, alias, replyEmail, partnerName){
+  //var string = 'mbonaro   , mbonaro@, mbonaro@fb.com,';
+  //Logger.log(string.split(",").map(function(element){return element.trim(); }));
+  var futureTime = 7 * 1000 * 60 * 60 * 24; //1 week
+  var now = new Date();
+  var timeZone = Session.getScriptTimeZone();
+  var deadline = Utilities.formatDate(new Date(now.getTime() + futureTime), timeZone, "MM-dd-yyyy");
+  Logger.log('deadline: ' + deadline);
+  
+  var array = contributor.split(",").map(function(element){
+    return element.trim()
+  }).map(function(element){
+    if (element.indexOf('@') < 0){
+      return element.concat('@fb.com');
+    }
+    else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+      return element.concat('fb.com'); 
+    }
+    else{
+      return element;
+    }
+  });
+  Logger.log('contrib array: ' + array);
+  array.push(submitter);
+  Logger.log('contrib array plus submitter: ' + array);  
+  
+  var emailBody = string.substring(string.indexOf('[GREENLIGHT_START]') + ('[GREENLIGHT_START]').length, string.indexOf('[GREENLIGHT_END]'))
+  emailBody = emailBody
+  .replace(/{docLink}/g, link)
+  .replace(/{partnerName}/g, partnerName)
+  .replace(/{dealName}/g, dealName)
+  .replace(/{dealLead}/g, spmName);
+  
+  for (var i = 0; i < array.length; i++){
+    Logger.log(array[i]); 
+    try{
+      try{
+        //DriveApp.getFileById(newId).getUrl().addEditor(array[i]);
+        DocumentApp.openById(newId).addEditor(array[i]);
+      }
+      catch(e){
+        Logger.log(e + ': DocumentApp adding editor: ' + array[i]);
+      }
+      MailApp.sendEmail(array[i], 'FBC BD Submission: ' + dealName, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail});
+    }
+    catch(e){
+      Logger.log(e + ': Mail Send to contributor list entry: ' + array[i]);
+      var body = 'the email address: ' + array[i] + ' is incorrect:';
+      MailApp.sendEmail(submitter, 'error email', body, {htmlBody: emailBody, name: 'PTRB Error Message', cc: 'mbonaro@fb.com'});
+    }
+  }
+}
+
+
+function sendToApprovers(){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('Approval Dashboard');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  //var row = e.range.getRow();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  for (var m = 0; m <= lastCol; m++){
+    if (values[1][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[1][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[1][m] == 'Submitter Name'){
+      var nameCol = m;
+    }
+    if (values[1][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[1][m] == 'Deal Name'){
+      var dealNameCol = m;
+    }
+    if (values[1][m] == 'DRG Approvers'){
+      var approversFormCol = m;
+    }
+    if (values[1][m] == 'Greenlight Docs'){
+      var reviewDocCol = m;
+    }
+    if (values[1][m] == 'Send Approval'){
+      var approveCol = m;
+    }
+    if (values[1][m] == 'Approvers'){
+      var approversCol = m;
+    }
+    if (values[1][m] == 'Date Approval Sent'){
+      var approveDateCol = m;
+    }
+  }
+  
+  for (var i = 2; i < lastRow; i++){
+    
+    var approve = values[i][approveCol];
+    var approvers = values[i][approversCol];
+    var approveFlag = values[i][approveDateCol];
+    var firstApprovers = values[i][approversFormCol];
+    
+    
+    try{
+      var submitter = values[i][emailAddressCol];
+      var partnerName = values[i][partnerNameCol];
+      var dealName = values[i][dealNameCol];
+      var driveArray = values[i][reviewDocCol].split(', ');
+      var driveFolder = driveArray[0];
+      var driveDoc = driveArray[1];
+      Logger.log('driveDoc: ' + driveDoc);
+      var driveNotes = driveArray[2];
+    }
+    catch(e){
+      Logger.log(e);
+      ui.alert('Data Error', 'You are missing data in the Control Page' , ui.ButtonSet.OK);
+    }
+    
+    var ui = SpreadsheetApp.getUi();
+    
+    
+    
+    if (approve == true && approveFlag == ''){
+      
+      if (firstApprovers == '' && approvers == ''){
+      var approveError = ui.alert('There are no approvers.  Please add Approvers and try again', ui.ButtonSet.OK)
+      break;
+    }
+      
+      var finalApprovers = '';
+      var approversArray1 = '';
+      if (firstApprovers != ''){
+        var approversArray1 = firstApprovers.split(",").map(function(element){
+          return element.trim()
+        }).map(function(element){
+          if (element.indexOf('@') < 0){
+            return element.concat('@fb.com');
+          }
+          else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+            return element.concat('fb.com'); 
+          }
+          else{
+            return element;
+          }
+        });
+        finalApprovers = approversArray1;
+      }
+      
+      var approversArray2 = '';
+      if (approvers != ''){
+        var approversArray2 = approvers.split(",").map(function(element){
+          return element.trim()
+        }).map(function(element){
+          if (element.indexOf('@') < 0){
+            return element.concat('@fb.com');
+          }
+          else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+            return element.concat('fb.com'); 
+          }
+          else{
+            return element;
+          }
+        });
+        finalApprovers = approversArray1.concat(approversArray2);
+      }
+      
+      
+      //var finalApprovers = approversArray1.concat(approversArray2)
+      Logger.log('finalApprovers: ' + finalApprovers);
+      var htmlDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1fRaA4RfExyeJAB5dDVx8GHRDoRx3MeIubL4MwMt1xcE/edit');
+      var docLink = '<a href="' + driveDoc + '">FBC BD Greenlight: ' + partnerName + '</a>';
+      var string = htmlDoc.getText().toString();
+      var body = string.substring(string.indexOf('[APPROVE_START]') + ('[APPROVE_START]').length, string.indexOf('[APPROVE_END]'))
+      body = body.replace(/{docLink}/g, docLink)
+      .replace(/{partnerName}/g, partnerName)
+      .replace(/{dealName}/g, dealName);
+      
+      var popUpBody = body.toString().substring(body.indexOf('<div>') + ('<div>').length, body.indexOf('</div>'))
+      popUpBody = popUpBody.replace(/<p[^>]*>/g, '')
+      .replace(/<\/?p[^>]*>/g, "")
+      .replace(/<ul[^>]*>/g, '')
+      .replace(/<\/?ul[^>]*>/g, "")
+      .replace(/<li[^>]*>/g, '')
+      .replace(/<\/?li[^>]*>/g, "");
+      
+      
+      var response = ui.alert('Seeking Approval Email Confirmation', 'You are about to seek approval for:\r\n' + partnerName + '\r\n\r\nTo: ' +  finalApprovers.toString() + '\r\n\r\nEmail Body: ' + popUpBody.toString() + '\r\n\r\nIs this correct?', ui.ButtonSet.YES_NO);
+      if (response == ui.Button.YES) {
+        var errorArray = [];
+        //Logger.log(body.getText());
+        if (firstApprovers == ''){finalApprovers = finalApprovers.split(',')};
+        for (var k = 0; k < finalApprovers.length; k++){
+          try{
+            
+            Logger.log('finalApprovers[k]: ' + finalApprovers[k])
+            //DocumentApp.openByUrl(driveDoc).addEditor(finalApprovers[k]);
+            MailApp.sendEmail(finalApprovers[k], 'Seeking Greenlight approval (Gate 1): ' + dealName, body, {htmlBody: body, name: 'Seeking Greenlight approval (Gate 1): ' + dealName, cc: ''});
+          }
+          
+          catch(e){
+            errorArray.push(finalApprovers[k]);
+            Logger.log(e);
+          }
+        }
+        Logger.log('errorArray: ' + errorArray);
+        if (errorArray != ''){
+          var response2 = ui.alert('Error', 'The following email(s) had an error:\r\n' + errorArray , ui.ButtonSet.OK);
+        }
+        s.getRange(i+1, approveDateCol+1, 1, 1).setValue(today);   
+      }
+      else{ 
+        
+        break;
+      }
+    }
+    
+    
+  } 
+}
+
+
+function sendFinalApproval(){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('Approval Dashboard');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  //var row = e.range.getRow();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  for (var m = 0; m <= lastCol; m++){
+    if (values[1][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[1][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[1][m] == 'Submitter Name'){
+      var nameCol = m;
+    }
+    if (values[1][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[1][m] == 'Deal Name'){
+      var dealNameCol = m;
+    }
+    if (values[1][m] == 'Deal Team'){
+      var contribFormCol = m;
+    }
+    if (values[1][m] == 'DRG Approvers'){
+      var approversFormCol = m;
+    }
+    if (values[1][m] == 'Greenlight Docs'){
+      var reviewDocCol = m;
+    }
+    if (values[1][m] == 'Send Approval'){
+      var approveCol = m;
+    }
+    if (values[1][m] == 'Approvers'){
+      var approversCol = m;
+    }
+    if (values[1][m] == 'Date Approval Sent'){
+      var approveDateCol = m;
+    }
+    if (values[1][m] == 'Final Approval'){
+      var finalApproveCol = m;
+    }
+    if (values[1][m] == 'Date Final Approval Sent'){
+      var finalApproveDateCol = m;
+    }
+  }
+  //	
+  
+  for (var i = 2; i < lastRow; i++){
+    
+    var approve = values[i][finalApproveCol];
+    var approvers = values[i][approversCol];
+    var contribList = values[i][contribFormCol];
+    var approveFlag = values[i][approveDateCol];
+    var firstApprovers = values[i][approversFormCol];
+    var finalApproveFlag = values[i][finalApproveDateCol];
+    
+    
+    try{
+      var submitter = values[i][emailAddressCol];
+      var partnerName = values[i][partnerNameCol];
+      var dealName = values[i][dealNameCol];
+      var driveArray = values[i][reviewDocCol].split(', ');
+      var driveFolder = driveArray[0];
+      var driveDoc = driveArray[1];
+      Logger.log('driveDoc: ' + driveDoc);
+      var driveNotes = driveArray[2];
+    }
+    catch(e){
+      Logger.log(e);
+      ui.alert('Data Error', 'You are missing data in the Control Page' , ui.ButtonSet.OK);
+    }
+    
+    
+    var ui = SpreadsheetApp.getUi();
+    
+    if (approve == true && approveFlag != '' && finalApproveFlag == ''){
+      
+      if (firstApprovers == '' && approvers == '' && contribList == ''){
+      var approveError = ui.alert('There are no approvers or contributors.  Please add some and try again', ui.ButtonSet.OK)
+      break;
+    }
+    
+      
+      var finalApprovers = '';
+      var approversArray1 = '';
+      if (firstApprovers != ''){
+        var approversArray1 = firstApprovers.split(",").map(function(element){
+          return element.trim()
+        }).map(function(element){
+          if (element.indexOf('@') < 0){
+            return element.concat('@fb.com');
+          }
+          else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+            return element.concat('fb.com'); 
+          }
+          else{
+            return element;
+          }
+        });
+        finalApprovers = approversArray1;
+      }
+      
+      var approversArray2 = '';
+      if (approvers != ''){
+        var approversArray2 = approvers.split(",").map(function(element){
+          return element.trim()
+        }).map(function(element){
+          if (element.indexOf('@') < 0){
+            return element.concat('@fb.com');
+          }
+          else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+            return element.concat('fb.com'); 
+          }
+          else{
+            return element;
+          }
+        });
+        finalApprovers = [finalApprovers].concat([approversArray2]);
+      }
+      
+      var contribArray1 = '';
+      if (contribList != ''){
+        var contribArray1 = contribList.split(",").map(function(element){
+          return element.trim()
+        }).map(function(element){
+          if (element.indexOf('@') < 0){
+            return element.concat('@fb.com');
+          }
+          else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+            return element.concat('fb.com'); 
+          }
+          else{
+            return element;
+          }
+        });
+        finalApprovers = [finalApprovers].concat([contribArray1]);
+      }
+      finalApprovers = finalApprovers.toString().split(',');
+      
+      //var finalApprovers = approversArray1.concat(approversArray2).concat(contribArray1);
+      Logger.log('finalApprovers: ' + finalApprovers);
+      var htmlDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1fRaA4RfExyeJAB5dDVx8GHRDoRx3MeIubL4MwMt1xcE/edit');
+      var docLink = '<a href="' + driveDoc + '">FBC BD Greenlight: ' + partnerName + '</a>';
+      var string = htmlDoc.getText().toString();
+      var body = string.substring(string.indexOf('[FINAL_START]') + ('[FINAL_START]').length, string.indexOf('[FINAL_END]'))
+      body = body.replace(/{docLink}/g, docLink)
+      .replace(/{partnerName}/g, partnerName)
+      .replace(/{dealName}/g, dealName);
+      
+      var popUpBody = body.toString().substring(body.indexOf('<div>') + ('<div>').length, body.indexOf('</div>'))
+      popUpBody = popUpBody.replace(/<p[^>]*>/g, '')
+      .replace(/<\/?p[^>]*>/g, "")
+      .replace(/<ul[^>]*>/g, '')
+      .replace(/<\/?ul[^>]*>/g, "")
+      .replace(/<li[^>]*>/g, '')
+      .replace(/<\/?li[^>]*>/g, "");
+      
+      var response = ui.alert('Greenlight (Gate 1) Approval Notice', 'You are about to send the approval notice for:\r\n' + partnerName + '\r\n\r\nTo: ' +  finalApprovers.toString() + '\r\n\r\nEmail Body: ' + popUpBody.toString() + '\r\n\r\nIs this correct?', ui.ButtonSet.YES_NO)
+      if (response == ui.Button.YES) {
+        var errorArray = [];
+        //Logger.log(body.getText());
+        
+        if (firstApprovers == '' && approvers == ''){finalApprovers = [finalApprovers]};
+        for (var k = 0; k < finalApprovers.length; k++){
+          try{
+            
+            //DocumentApp.openByUrl(driveDoc).addEditor(finalApprovers[k]);
+            MailApp.sendEmail(finalApprovers[k], 'Greenlight approval notice (Gate 1):' + dealName, body, {htmlBody: body, name: 'Greenlight approval notice (Gate 1):' + dealName, cc: ''});
+          }
+          
+          catch(e){
+            errorArray.push(finalApprovers[k]);
+            Logger.log(e);
+          }
+        }
+        Logger.log('errorArray: ' + errorArray);
+        if (errorArray != ''){
+          var response2 = ui.alert('Error', 'The following email(s) had an error:\r\n' + errorArray , ui.ButtonSet.OK);
+        }
+        s.getRange(i+1, finalApproveDateCol+1, 1, 1).setValue(today);   
+      }
+      else{ 
+        
+        break;
+      }
+    }
+    else if (approve == true && approveFlag == '' && finalApproveFlag == ''){
+      s.getRange(i+1, finalApproveCol+1, 1, 1).setValue(false); 
+      
+    }
+    
+    
+  } 
+}
