@@ -1,0 +1,841 @@
+function onOpen() {
+// This line calls the SpreadsheetApp and gets its UI   
+// Or DocumentApp or FormApp.
+  var ui = SpreadsheetApp.getUi();
+ 
+//These lines create the menu items and 
+// tie them to functions we will write in Apps Script
+  
+  ui.createMenu('Script Menu')
+  .addItem('On Submit', 'onSubmit')
+  .addItem('Send Pre-read', 'sendPreRead')
+  .addItem('Send Vote Form', 'sendVoteForm')
+  .addItem('Update Form Sheet Names', 'renameFormResponseSheets')
+  .addItem('Clear Flags', 'clearFlags')
+  .addToUi();
+}
+
+function onSubmit(e) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  if (ss.getActiveSheet().getName() == 'Platform Term Partner Submissions'){
+    var s = ss.getSheetByName('Platform Term Partner Submissions');
+    var data = s.getDataRange();
+    var values = data.getValues();
+    var row = e.range.getRow();
+    row = row-1;
+    var today = new Date();
+    var lastRow = s.getLastRow();
+    var lastCol = s.getLastColumn();
+    var timeZone = Session.getScriptTimeZone();
+    var today = Utilities.formatDate(new Date(), timeZone, "dd-MM-yyyy hh:mm:ss");
+    //var today = Utilities.formatDate(new Date(), timeZone, "dd-MM-yyyy");
+    
+    for (var m = 0; m < lastCol; m++){
+      if (values[0][m] == 'Timestamp'){
+        var timestampCol = m;
+      }
+      if (values[0][m] == 'Email Address'){
+        var emailCol = m;
+      }
+      if (values[0][m] == 'Please provide your full name'){
+        var nameCol = m;
+      }
+      if (values[0][m] == 'Name of the Partner (legal entity) - and include links to larger entity'){
+        var partnerNameCol = m;
+      }
+      if (values[0][m] == 'Executive Sponsor at FB for this Partner'){
+        var execSponsorCol = m;
+      }
+      if (values[0][m] == 'Please list all touchpoints (product areas) with this Partner'){
+        var touchpointCol = m;
+      }
+      if (values[0][m] == 'Please list email address of all relevant contributors to this project.'){
+        var contribCol = m;
+      }
+    }
+    
+    var testRow = 1;
+    Logger.log('partnerNameCol: ' + partnerNameCol);
+    var spmName = values[row][nameCol];
+    var partnerName = values[row][partnerNameCol];
+    var execSponsor = values[row][execSponsorCol];
+    var touchpoint = values[row][touchpointCol];
+    var touchpointArray = touchpoint.split(",");
+    var contributor = values[row][contribCol];
+    Logger.log('touchpointArray: ' + touchpointArray);
+    
+    var timestamp = values[row][timestampCol];
+    var submitter = values[row][emailCol];
+    if (submitter == 'mbonaro@gsuitetest.fb.com'){
+      submitter = 'mbonaro@fb.com';
+    }
+    
+   try{
+      //Creating the new document and filling in values
+      var fileArray = createFolder(partnerName);
+      
+      var newFolder = fileArray[0];
+      var newFolderUrl = newFolder.getUrl();
+      var newUrl = DriveApp.getFileById('1kvG8jWbC6Np4yIqWhHnOxNpQRgHrBz3yQ4J9o3_ogmY').makeCopy('Platform Terms Review Board: ' + partnerName + ' - ' + today, newFolder);
+      DocumentApp.openByUrl(newUrl.getUrl()).addEditor('mbonaro@fb.com').addEditor('mbonaro@gsuitetest.fb.com').addEditor(submitter);
+      Logger.log('newUrl: ' + newUrl);
+      Logger.log('newFolder: ' + newFolderUrl);
+      
+      var noteDocUrl =  fileArray[1].getUrl();
+
+      var newId = newUrl.getId();
+      var newDoc = DocumentApp.openById(newId);
+      var newDocURL2 = DriveApp.getFileById(newId).getUrl()
+      var newBody = newDoc.getBody();
+      newDoc.addEditor(submitter);
+      newBody.replaceText("{partnerName}", partnerName)
+      .replaceText("{testing}", execSponsor);
+      try{
+        addTableInDocument(newId,touchpointArray);
+      }
+      catch(e){
+        Logger.log(e);
+      }
+      
+      try{
+        emailController(submitter, contributor, spmName, newId, partnerName, newFolderUrl);
+      }
+      catch(e){
+        Logger.log(e);
+      }
+    }
+    catch(e){
+      Logger.log(e);
+    }
+    var array = [newFolderUrl, newDocURL2, noteDocUrl];
+    var string = array.join(', ');
+    
+    //update second sheet
+    try{
+      copySubmission(ss, timestamp, submitter, partnerName, string, spmName);
+    }
+    catch(e){
+    } 
+  }
+  //else copy to main repository
+
+}
+
+function createFolder(partnerName){
+  try{
+    //Logger.log(DriveApp.getFolderById('1KTwAmO8P4z5qOWo1Y_1BmzNAtQr8omiX').getName());
+    //Create a new Folder in the PTRB folder loaction with the partner name
+    var folder = DriveApp.getFolderById('1KTwAmO8P4z5qOWo1Y_1BmzNAtQr8omiX');
+    var newFolderID = folder.createFolder(partnerName).getId();
+    var newFolder = DriveApp.getFolderById(newFolderID);
+    //DocumentApp.openById(newFolderID).addEditor('mbonaro@fb.com').addEditor('maritzajl@fb.com');
+    DriveApp.Permissions.insert(
+      {
+        'role': 'editor',
+        'type': 'user',
+        'value': 'mbonaro@fb.com, maritzajl@fb.com, jkhurana@fb.com, devinmarsh@fb.com, michaelcohen@fb.com, angus@fb.com'
+      },
+      newFolder.getId(),
+      {
+        'sendNotificationEmails': false
+      }
+    );
+  }
+  catch(e){
+    Logger.log(e);
+  }
+  
+  try{
+    
+    //Create a new version of the notes doc and put it in the folder
+    var newDoc = DocumentApp.create('Notes Doc: ' + partnerName).addEditor('mbonaro@fb.com').addEditor('maritzajl@fb.com').addEditor('angus@fb.com');
+    var driveFile = DriveApp.getFileById(newDoc.getId()); // Gets the drive File
+    var driveFileCopy = driveFile.makeCopy(newDoc.getName(), newFolder); // Create a copy of the newDoc in the shared folder
+    driveFile.setTrashed(true);
+  }
+  catch(e){
+    Logger.log(e);
+  }
+  var array = [newFolder, driveFileCopy];
+  return array; //Send back the new folder location so we can add other docs to it
+}
+
+
+function emailController(recipient, contributor, spmName, newId, partnerName, newFolderUrl){
+  var newUrl = DriveApp.getFileById(newId).getUrl();
+  var link = '<a href="' + newUrl + '">Link</a>';
+  var emailDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1yMCAiRwcmRTBKZObXYd-kk15Q0iACIuzGNOU7LzbMEQ/edit');
+  var string = emailDoc.getText().toString();
+  var alias = 'PTRB Team';
+  var replyEmail = 'jkhurana@fb.com, michaelcohen@fb.com';
+  var ccAddress = 'mbonaro@fb.com';
+  
+  //var ptrbTeamEmails = 'mbonaro@fb.com, maritzajl@fb.com, jkhurana@fb.com, devinmarsh@fb.com, michaelcohen@fb.com';
+  //var amazonUrl = '<a href="https://docs.google.com/document/d/1anm1g94JMK4VpQKrHR9faweiOuKdPSTWwWH57x5VJfA/edit?pli=1">Link</a>';
+  
+  //send michael/jitin
+  sendLegalEmail(ccAddress, newId, partnerName, string, link, alias, replyEmail, spmName, contributor, newFolderUrl);
+  //send submission
+  sendSubmissionEmail(recipient, newId, partnerName, string, link, alias, replyEmail);
+  //send contributor
+  sendContributorEmail(contributor, newId, partnerName, spmName, string, link, alias, replyEmail);
+}
+
+function sendLegalEmail(ccAddress, newId, partnerName, string, link, alias, replyEmail, spmName, contributor, newFolderUrl){
+  var rawUrl = 'https://docs.google.com/spreadsheets/d/1TG_2kWSwF-8wmcSiewSkgAGhejDjotB2szbHdixaZ2E/edit?pli=1#gid=2112073861';
+  var rawLink = '<a href="' + rawUrl + '">Raw data here</a>';
+  var folderLink = '<a href="' + newFolderUrl + '">Folder with docs here</a>';
+  var emailBody = string.substring(string.indexOf('[LEGAL_START]') + ('[LEGAL_START]').length, string.indexOf('[LEGAL_END]'))
+  emailBody = emailBody.replace(/{docLink}/g, link)
+  .replace(/{partnerName}/g, partnerName)
+  .replace(/{spmName}/g, spmName)
+  .replace(/{collaborators}/g, contributor)
+  .replace(/{rawLink}/g, rawLink)
+  .replace(/{folderLink}/g, folderLink);
+  var subject = 'New submission for Legal';
+  
+  //var testEmail = 'mbonaro@fb.com, maritzajl@fb.com';
+  //var michaelNjitin = 'mbonaro@fb.com';
+  var michaelNjitin = 'jkhurana@fb.com, michaelcohen@fb.com'
+  
+  MailApp.sendEmail(michaelNjitin, subject, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail, cc: ccAddress});
+}
+
+function sendSubmissionEmail(submitter, newId, partnerName, string, link, alias, replyEmail){
+  var emailBody = string.substring(string.indexOf('[SUBMISSION_START]') + ('[SUBMISSION_START]').length, string.indexOf('[SUBMISSION_END]'))
+  emailBody = emailBody.replace(/{docLink}/g, link).replace(/{partnerName}/g, partnerName);
+  var subject = 'Submission confirmed for ' + partnerName;
+  
+  MailApp.sendEmail(submitter, subject, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail});
+}
+
+
+function sendContributorEmail(contributor, newId, partnerName, spmName, string, link, alias, replyEmail){
+  //var string = 'mbonaro   , mbonaro@, mbonaro@fb.com,';
+  //Logger.log(string.split(",").map(function(element){return element.trim(); }));
+  var futureTime = 7 * 1000 * 60 * 60 * 24; //1 week
+  var now = new Date();
+  var timeZone = Session.getScriptTimeZone();
+  var deadline = Utilities.formatDate(new Date(now.getTime() + futureTime), timeZone, "MM-dd-yyyy");
+  Logger.log('deadline: ' + deadline);
+  
+  var array = contributor.split(",").map(function(element){
+    return element.trim()
+  }).map(function(element){
+    if (element.indexOf('@') < 0){
+      return element.concat('@fb.com');
+    }
+    else if (element.indexOf('@') > 0 && element.indexOf('fb.com') < 0){
+      return element.concat('fb.com'); 
+    }
+    else{
+      return element;
+    }
+  });
+  Logger.log('contrib array: ' + array);  
+  
+  var emailBody = string.substring(string.indexOf('[CONTRIBUTOR_START]') + ('[CONTRIBUTOR_START]').length, string.indexOf('[CONTRIBUTOR_END]'))
+  emailBody = emailBody.replace(/{docLink}/g, link).replace(/{partnerName}/g, partnerName).replace(/{spmName}/g, spmName).replace(/{deadline}/g, deadline);
+  
+  for (var i = 0; i < array.length; i++){
+    Logger.log(array[i]); 
+    try{
+      try{
+        //DriveApp.getFileById(newId).getUrl().addEditor(array[i]);
+        DocumentApp.openById(newId).addEditor(array[i]);
+      }
+      catch(e){
+        Logger.log(e);
+      }
+      MailApp.sendEmail(array[i], 'Platform Terms Review Submission: ' + partnerName, emailBody, {htmlBody: emailBody, name: alias, replyTo: replyEmail});
+    }
+    catch(e){
+      var body = 'the email address: ' + array[i] + ' is incorrect:';
+      MailApp.sendEmail('mbonaro@fb.com', 'error email', body, {htmlBody: emailBody, name: 'PTRB Error Message'});
+    }
+  }
+}
+
+function copySubmission(ss, timestamp, submitter, partnerName, string, spmName){
+  var s = ss.getSheetByName('PTRB Control Page');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  //var row = e.range.getRow();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[0][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[0][m] == 'Submitter Name'){
+      var nameCol = m;
+    }
+    if (values[0][m] == 'Send Vote Email'){
+      var voteCol = m;
+    }
+    if (values[0][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[0][m] == 'Platform Terms Review folder (link)'){
+      var reviewDocCol = m;
+    }
+    if (values[0][m] == 'Send Pre-read'){
+      var prereadCol = m;
+    }
+    if (values[0][m] == 'Meeting Consensus'){
+      var consensusCol = m;
+    }
+  }
+  
+  s.getRange(lastRow+1, timestampCol+1, 1, 1).setValue(timestamp);
+  s.getRange(lastRow+1, emailAddressCol+1, 1, 1).setValue(submitter);
+  s.getRange(lastRow+1, nameCol+1, 1, 1).setValue(spmName);
+  s.getRange(lastRow+1, partnerNameCol+1, 1, 1).setValue(partnerName);
+  s.getRange(lastRow+1, reviewDocCol+1, 1, 1).setValue(string);
+  s.getRange(lastRow+1, prereadCol+1, 1, 1).insertCheckboxes();
+  s.getRange(lastRow+1, voteCol+1, 1, 1).insertCheckboxes();
+  
+  var rule = s.getRange(lastRow, consensusCol+1, 1, 1).getDataValidation();
+  s.getRange(lastRow+1, consensusCol+1, 1, 1).setDataValidation(rule)
+  
+}
+
+
+function addTableInDocument(docId, touchpointArray) {
+  //define header cell style which we will use while adding cells in header row
+  //Backgroud color, text bold, white
+  var headerStyle = {};
+  headerStyle[DocumentApp.Attribute.BACKGROUND_COLOR] = '#c9daf8';
+  headerStyle[DocumentApp.Attribute.BOLD] = true;
+  headerStyle[DocumentApp.Attribute.FOREGROUND_COLOR] = '#000000';
+  //headerStyle[DocumentApp.Attribute.HorizontalAlignment.CENTER] = true;
+  
+  //Style for the cells other than header row
+  var cellStyle = {};
+  cellStyle[DocumentApp.Attribute.BOLD] = false;
+  cellStyle[DocumentApp.Attribute.FOREGROUND_COLOR] = '#000000';
+
+  //By default, each paragraph had space after, so we will change the paragraph style to add zero space
+  //we will use it later
+  var paraStyle = {};
+  paraStyle[DocumentApp.Attribute.SPACING_AFTER] = 0;
+  paraStyle[DocumentApp.Attribute.LINE_SPACING] = 1;
+  
+  //get the document
+  //var doc = DocumentApp.getActiveDocument(); //or
+  var doc = DocumentApp.openById(docId); //or
+  //var doc = DocumentApp.openByUrl('https://docs.google.com/document/d/1T0iGRXaa0G172R03Id11K0sdw6bHHmS4SDEfcEx3X9g/edit');
+  
+  //get the body section of document
+  var body = doc.getBody();
+  
+  //Add a table in document
+ // var table = body.appendTable();
+  
+  
+  var foundTag = body.findText('{testing table}');
+  var tagElement = foundTag.getElement();
+  var parent = tagElement.getParent();
+  var insertPoint = parent.getParent().getChildIndex(parent);
+  var table = body.insertTable(insertPoint);
+  foundTag.getElement().removeFromParent();
+  
+  var headerArray = ['Touchpoint', 'Description', 'Key Initiatives', 'Platform Terms implicated?']
+  //var touchString = 'touch1 asdf, touch2, touch 3,touch4, touch55555,    touch8. ';
+  //var touchpointArray = touchString.split(",");
+  
+  //Create 5 rows and 4 columns
+  for(var i=0; i <= touchpointArray.length; i++){
+    var tr = table.appendTableRow();
+    
+    //add 4 cells in each row
+    for(var j=0; j < headerArray.length; j++){
+      if (i == 0){
+        var td = tr.appendTableCell(headerArray[j]);
+      }
+      else if (j == 0){
+        var td = tr.appendTableCell(touchpointArray[i-1].trim());
+      }
+      else {
+        var td = tr.appendTableCell('');
+      }
+      
+      //if it is header cell, apply the header style else cellStyle
+      if(i == 0) td.setAttributes(headerStyle);
+      else td.setAttributes(cellStyle);
+      
+      //Apply the para style to each paragraph in cell
+      var paraInCell = td.getChild(0).asParagraph();
+      paraInCell.setAttributes(paraStyle);
+    }
+  }
+ 
+  //Save and close the document
+  doc.saveAndClose();
+}
+
+
+function clearFlags() {
+var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('PTRB Control Page');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Send Pre-read'){
+      var prereadCol = m;
+    }
+    if (values[0][m] == 'Date Pre-read Sent'){
+      var prereadFlagCol = m;
+    }
+    if (values[0][m] == 'Send Vote Email'){
+      var voteCol = m;
+    }
+    if (values[0][m] == 'Date Vote Form Sent'){
+      var voteFlagCol = m;
+    }
+  }		
+  
+  for (var i = 2; i <= lastRow; i++){
+    s.getRange(i, prereadCol+1, 1, 1).setValue(false);
+    s.getRange(i, prereadFlagCol+1, 1, 1).clearContent();
+    s.getRange(i, voteCol+1, 1, 1).setValue(false);
+    s.getRange(i, voteFlagCol+1, 1, 1).clearContent();
+    
+  }
+}
+
+function sendPreRead(){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('PTRB Control Page');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  Logger.log(lastRow);
+  var lastCol = s.getLastColumn();
+  var email = Session.getActiveUser().getEmail();
+  if (email == 'mbonaro@gsuitetest.fb.com'){
+    email = 'mbonaro@fb.com';
+  }
+  Logger.log(email);
+  var ui = SpreadsheetApp.getUi();
+  
+  //var ptrbTeamEmails = 'mbonaro@fb.com, maritzajl@fb.com, jkhurana@fb.com, devinmarsh@fb.com, michaelcohen@fb.com'; //email list for testing
+  var ptrbTeamEmailArray = joinEmailArray(ss.getSheetByName('PTRB Member Email List'));
+  var ptrbTeamEmails = ptrbTeamEmailArray[0];
+  var ptrbTeamEmailsSharingArray = ptrbTeamEmailArray[1];
+  var ptrbTeamNames = ptrbTeamEmailArray[2];
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[0][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[0][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[0][m] == 'Platform Terms Review folder (link)'){
+      var docCol = m;
+    }
+    if (values[0][m] == 'Send Pre-read'){
+      var prereadCol = m;
+    }
+    if (values[0][m] == 'Date Pre-read Sent'){
+      var prereadFlagCol = m;
+    }
+    if (values[0][m] == 'Send Vote Email'){
+      var voteCol = m;
+    }
+    if (values[0][m] == 'Date Vote Form Sent'){
+      var voteFlagCol = m;
+    }
+  }		
+  
+  var array = [];
+  
+  for (var i = 1; i < lastRow; i++){
+    
+    var preread = values[i][prereadCol];
+    var prereadFlag = values[i][prereadFlagCol];
+    var vote = values[i][voteCol];
+    var voteFlag = values[i][voteFlagCol];
+    
+    try{
+      var recipient = values[i][emailAddressCol];
+      var partnerName = values[i][partnerNameCol];
+      var driveArray = values[i][docCol].split(', ');
+      var driveFolder = driveArray[0];
+      var driveDoc = driveArray[1];
+      Logger.log('driveDoc: ' + driveDoc);
+      var driveNotes = driveArray[2];
+    }
+    catch(e){
+      Logger.log(e);
+      ui.alert('Data Error', 'You are missing data in the Control Page' , ui.ButtonSet.OK);
+    }
+    
+    if (preread == true && prereadFlag == ''){
+      var line = [];
+      line.push(partnerName);
+      
+      //add a push to an array that caputures some info
+      //Platform Terms Review Board: <Partner Name>
+      
+      
+      var response = ui.alert('Pre-read Email Confirmation', 'You are about to send a pre-read for:\r\n' + partnerName + '\r\n\r\nTo: ' +  ptrbTeamNames + '\r\n\r\nIs this correct?', ui.ButtonSet.YES_NO);
+      if (response == ui.Button.YES) {
+        var newDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1yMCAiRwcmRTBKZObXYd-kk15Q0iACIuzGNOU7LzbMEQ/edit');
+        var docLink = '<a href="' + driveDoc + '">Platform Terms Review Board: ' + partnerName + '</a>';
+        //var docId2 = driveDoc.get
+        for (var k = 0; k < ptrbTeamEmailsSharingArray.length; k++){
+          DocumentApp.openByUrl(driveDoc).addEditor(ptrbTeamEmailsSharingArray[k]);
+        }
+        
+        var partnerNameLink = values[i][partnerNameCol].toString().replace(/ /g, "+");
+        var formLink = 'https://docs.google.com/forms/d/e/1FAIpQLSdjyuw6dURFqXvhMsLzToVUO8bhL_A52HjG2bNrfVRFnHScsw/viewform?entry.174182419=' + partnerNameLink;
+        var string = newDoc.getText().toString();
+        var body = string.substring(string.indexOf('[PREREAD_START]') + ('[PREREAD_START]').length, string.indexOf('[PREREAD_END]'))
+        body = body.replace(/{docLink}/g, docLink)
+        .replace(/{partnerName}/g, partnerName);
+        //Logger.log(body.getText());
+        MailApp.sendEmail(ptrbTeamEmails, 'PTRB Pre-Read Documents', body, {htmlBody: body, name: 'PTRB Team', cc: 'jkhurana@fb.com, devinmarsh@fb.com, mbonaro@fb.com, maritzajl@fb.com'});
+        
+        s.getRange(i+1, prereadFlagCol+1, 1, 1).setValue(today);   
+      }
+      else{ 
+        
+        break;
+      }
+    }
+    
+  } 
+}
+
+
+
+
+function sendVoteForm(){
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('PTRB Control Page');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  var today = new Date();
+  var lastRow = s.getLastRow();
+  Logger.log(lastRow);
+  var lastCol = s.getLastColumn();
+  var email = Session.getActiveUser().getEmail();
+  //var email = 'martizajl@fb.com';
+  if (email == 'mbonaro@gsuitetest.fb.com'){
+    email = 'mbonaro@fb.com';
+  }
+  Logger.log(email);
+  
+  var futureTime = 7 * 1000 * 60 * 60 * 24;
+  var now = new Date();
+  var timeZone = Session.getScriptTimeZone();
+  var deadline = Utilities.formatDate(new Date(now.getTime() + futureTime), timeZone, "MM-dd-yyyy");
+  
+  var ui = SpreadsheetApp.getUi();
+  
+  //var ptrbTeamEmails = 'mbonaro@fb.com, maritzajl@fb.com, jkhurana@fb.com, devinmarsh@fb.com, michaelcohen@fb.com';
+  var ptrbTeamEmailArray = joinEmailArray(ss.getSheetByName('PTRB Member Email List'));
+  var ptrbTeamEmails = ptrbTeamEmailArray[0];
+  var ptrbTeamEmailsSharingArray = ptrbTeamEmailArray[1];
+  var ptrbTeamNames = ptrbTeamEmailArray[2];
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Date Submitted'){
+      var timestampCol = m;
+    }
+    if (values[0][m] == 'Submitter Email'){
+      var emailAddressCol = m;
+    }
+    if (values[0][m] == 'Partner Name'){
+      var partnerNameCol = m;
+    }
+    if (values[0][m] == 'Platform Terms Review folder (link)'){
+      var docCol = m;
+    }
+    if (values[0][m] == 'Send Pre-read'){
+      var prereadCol = m;
+    }
+    if (values[0][m] == 'Date Pre-read Sent'){
+      var prereadFlagCol = m;
+    }
+    if (values[0][m] == 'Send Vote Email'){
+      var voteCol = m;
+    }
+    if (values[0][m] == 'Date Vote Form Sent'){
+      var voteFlagCol = m;
+    }
+    if (values[0][m] == 'Meeting Consensus'){
+      var consensusCol = m;
+    }
+  }		
+  
+  for (var i = 1; i < lastRow; i++){
+    var preread = values[i][prereadCol];
+    var prereadFlag = values[i][prereadFlagCol];
+    var vote = values[i][voteCol];
+    var voteFlag = values[i][voteFlagCol];
+    
+    try{
+      var recipient = values[i][emailAddressCol];
+      var partnerName = values[i][partnerNameCol];
+      var consensus = values[i][consensusCol];
+      var driveArray = values[i][docCol].split(', ');
+      var driveFolder = driveArray[0];
+      var driveDoc = driveArray[1];
+      var driveNotes = driveArray[2];
+    }
+    catch(e){
+      Logger.log(e);
+      ui.alert('Data Error', 'You are missing data in the Control Page' , ui.ButtonSet.OK);
+    }
+    
+    if (vote == true && voteFlag == '' && preread == true && prereadFlag != '' && consensus != 'N/A' && consensus != ''){
+      var response = ui.alert('Vote Email Confirmation', 'You are about to send a vote form for:\r\n' + partnerName + '\r\n\r\nTo: ' + ptrbTeamNames + '\r\n\r\nIs this correct?', ui.ButtonSet.YES_NO);
+      if (consensus == 'For'){
+        var consensusText = 'FOR';
+      }
+      else if (consensus == 'Against'){
+        var consensusText = 'AGAINST';
+      }
+    
+      if (response == ui.Button.YES) {
+        //email doc info
+        var newDoc = DocumentApp.openByUrl('https://docs.google.com/document/d/1yMCAiRwcmRTBKZObXYd-kk15Q0iACIuzGNOU7LzbMEQ/edit');
+        var docLink = '<a href="' + driveDoc + '">here</a>';
+        var string = newDoc.getText().toString();
+        var body = string.substring(string.indexOf('[VOTE_' + consensusText + '_START]') + ('[VOTE_' + consensusText + '_START]').length, string.indexOf('[VOTE_' + consensusText + '_END]'));
+        var notesLink = '<a href="' + driveNotes + '">PTRB Meeting Notes</a>';
+        
+        //new form info
+        //var formLink = 'https://docs.google.com/forms/d/e/1FAIpQLSdjyuw6dURFqXvhMsLzToVUO8bhL_A52HjG2bNrfVRFnHScsw/viewform?entry.174182419=' + partnerName;
+        //var partnerNameLink = values[i][partnerNameCol].toString().replace(/ /g, "+");
+        var form = FormApp.create('PTRB Votes').setDescription('Voting form for: ' + partnerName).setTitle('PTRB Votes - ' + partnerName);
+        var formId = form.getId();
+        var ss = SpreadsheetApp.openByUrl('https://docs.google.com/spreadsheets/d/1TG_2kWSwF-8wmcSiewSkgAGhejDjotB2szbHdixaZ2E/edit?pli=1#gid=519723737');
+        form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId()).setCollectEmail(true).setLimitOneResponsePerUser(true);
+        var formDestination = form.getDestinationId();
+        //var destinationSheet = ss.get
+        
+        form.addTextItem().setTitle('Partner Name');
+        var item = form.addMultipleChoiceItem();
+        item.setTitle('Based on the information in the briefing document, do you support the case to negotiate Platform terms with ' + partnerName + '?')
+        .setChoices([
+          item.createChoice('Yes'),
+          item.createChoice('No'),
+          item.createChoice('Need more information')
+        ])
+        .showOtherOption(true);
+        
+        form.addParagraphTextItem().setTitle('If you chose "Need more information", please state the concerns/questions for us to follow up on.');
+        form.addParagraphTextItem().setTitle('Please feel free to leave comments regarding your decision for ' + partnerName + '.');
+        var items = form.getItems();
+        var formUrl = form.createResponse()
+        .withItemResponse(items[0].asTextItem().createResponse(partnerName))
+        .toPrefilledUrl();
+        
+        //document permissions
+        DocumentApp.openByUrl(driveNotes).addEditors(ptrbTeamEmailsSharingArray);
+        DocumentApp.openByUrl(driveDoc).addEditors(ptrbTeamEmailsSharingArray);
+        
+        //final email body
+         body = body.replace(/{docLink}/g, docLink)
+        .replace(/{formLink}/g, formUrl)
+        .replace(/{partnerName}/g, partnerName)
+        .replace(/{deadline}/g, deadline)
+        .replace(/{notesLink}/g, notesLink);
+        
+        //Send email and update flag
+        //add ccAddress
+        MailApp.sendEmail(ptrbTeamEmails, 'PTRB Voting Form', body, {htmlBody: body, name: 'PTRB Team'});
+        s.getRange(i+1, voteFlagCol+1, 1, 1).setValue(today);   
+      }
+      else{ 
+      
+        break;
+      }
+    }
+    else if (vote == true && voteFlag == '' && preread == true && prereadFlag != '' && consensus == ''){
+      ui.alert('Vote Email Confirmation', 'Please choose an option in the Meeting consensus column for ' + partnerName , ui.ButtonSet.OK);
+      break;
+    }
+    else if (vote == true && voteFlag == '' && preread == false && prereadFlag == ''){
+      s.getRange(i+1, voteCol+1, 1, 1).setValue(false);
+    }
+    else if (vote == true && voteFlag == '' && preread == true && prereadFlag != '' && consensus == 'N/A'){
+      //ui.alert('Vote Email Confirmation', 'Please choose an option in the Meeting consensus column for ' + partnerName , ui.ButtonSet.OK);
+      break;
+    }
+  } 
+  renameFormResponseSheets();
+}
+
+function renameFormResponseSheets(){
+  //var ss = SpreadsheetApp.openByUrl('https://docs.google.com/spreadsheets/d/1eflmt_8xE_qh6shS5eTWfsMXniqBCba44Bfun9Md_ZA/edit#gid=565083545');
+  var ss = SpreadsheetApp.openByUrl('https://docs.google.com/spreadsheets/d/1ZO71x5NwI3xqlRNYNelNjJtoRmX8rJ8IdQ89qhg0_OI/edit#gid=1516139222');
+  var sheets = ss.getSheets();
+  for (var i = 0; i < ss.getNumSheets(); i++){
+    var sheetName = sheets[i].getName();
+    if (sheetName.indexOf('Form Responses') >= 0){
+      try{
+        var sheet = sheets[i];
+        var formUrl = sheet.getFormUrl();
+        var form = FormApp.openByUrl(formUrl);
+        var formName = form.getTitle();
+        Logger.log(formName);
+        sheet.setName(formName);
+      }
+      catch(e){
+        Logger.log(e);
+      }
+    }
+  }
+}
+
+function createForm(){ //creating a new form for voting and assigning location
+
+}
+
+function sendReminder() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheets = ss.getSheets();
+  for (var i = 0; i < ss.getNumSheets(); i++){
+    var sheetName = sheets[i].getName();
+    if (sheetName.indexOf('PTRB Votes') > 0){
+      try{
+        for (var m = 0; m < lastCol; m++){
+          if (values[0][m] == 'Timestamp'){
+            var timestampCol = m;
+          }
+          if (values[0][m] == 'Email Address'){
+            var emailCol = m;
+          }
+          if (values[0][m] == 'Partner Name'){
+            var partnerNameCol = m;
+          }
+        }
+        
+        var sheet = sheets[i];
+        
+        var ptrbTeamEmailArray = joinEmailArray(ss.getSheetByName('PTRB Member Email List'));
+        var ptrbTeamEmails = ptrbTeamEmailArray[0];
+        //var ptrbTeamEmailsSharingArray = ptrbTeamEmailArray[1];
+        
+        var ptrbTeamNames = ptrbTeamEmailArray[2];
+        //var array = [];
+        for (var j = 1; j < sheet.getLastRow(); j++){
+          var email = sheet.getRange(j, emailCol, 1, 1).getValue();
+          
+          //for (var k = 0; k < ptrbTeamEmailsSharingArray.length; k++){
+            //if (email == ptrbTeamEmailsSharingArray[k]){
+              var array = ptrbTeamEmailsSharingArray.filter(function (element){
+                return email == element;
+              });
+              Logger.log(email);
+            //}
+          //}
+        }
+      }
+      catch(e){
+        Logger.log(e);
+      }
+    }  
+  }
+}
+
+
+/*
+
+var res = values.filter(
+   function(e) {
+      return target_sheet_values.filter(
+         function(f) {
+            return e.toString() == f.toString()
+         }).length == 0
+   });
+   
+*/
+
+
+function joinEmailArray(s){
+  //var ss = SpreadsheetApp.getActiveSpreadsheet();
+  //var s = ss.getSheetByName('PTRB Member Email List');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Name'){
+      var nameCol = m;
+    }
+    if (values[0][m] == 'Email Address'){
+      var emailCol = m;
+    }
+  }
+  
+  var array = [];
+  var array2 = [];
+  
+  for (var i = 1; i < lastRow; i++){
+    
+    array.push(values[i][emailCol]);
+    array2.push(values[i][nameCol]);
+  }
+  
+  var string = array.join(', ');
+  var string2 = array2.join(', ');
+  var joinedArray = [string, array, string2]; //emails, [emails], names
+  Logger.log('joinedArray from PTRB emails: ' + joinedArray);
+  
+  return joinedArray;
+}
+
+
+function joinEmailArrayTest(){ //run manually for testing
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var s = ss.getSheetByName('PTRB Member Email List');
+  var data = s.getDataRange();
+  var values = data.getValues();
+  var lastRow = s.getLastRow();
+  var lastCol = s.getLastColumn();
+  
+  for (var m = 0; m < lastCol; m++){
+    if (values[0][m] == 'Name'){
+      var nameCol = m;
+    }
+    if (values[0][m] == 'Email Address'){
+      var emailCol = m;
+    }
+  }
+  
+  var array = [];
+  var array2 = [];
+  
+  for (var i = 1; i < lastRow; i++){
+    
+    array.push(values[i][emailCol]);
+    array2.push(values[i][nameCol]);
+  }
+  
+  var string = array.join(', ');
+  var string2 = array2.join(', ');
+  var joinedArray = [string, array, string2];
+  Logger.log(joinedArray);
+}
+
+
+
